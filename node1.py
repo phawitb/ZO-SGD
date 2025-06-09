@@ -16,7 +16,7 @@ mu = 0.005
 eta = 5e-6
 P = 5
 seed_base = 42
-node2_host = '192.168.1.45'  # เปลี่ยนเป็น IP ของ node2 จริง
+node2_host = '192.168.1.45'  # ----------------
 node2_port = 11111
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
