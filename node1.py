@@ -16,7 +16,7 @@ mu = 0.005
 eta = 5e-6
 P = 5
 seed_base = 42
-node2_host = '127.0.0.1'
+node2_host = '192.168.1.45'  # เปลี่ยนเป็น IP ของ node2 จริง
 node2_port = 11111
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
@@ -69,19 +69,9 @@ train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, co
 def tensor_bytes(tensor):
     return tensor.numel() * tensor.element_size()
 
-def log_send(tensor_name, tensor):
-    shape = tensor.shape
-    size_bytes = tensor_bytes(tensor)
-    logger.info(f"Send {tensor_name} shape={shape}, size={size_bytes / 1e6:.3f} MB")
-    return size_bytes
-
-def log_recv(tensor_name, tensor):
-    shape = tensor.shape
-    size_bytes = tensor_bytes(tensor)
-    logger.info(f"Recv {tensor_name} shape={shape}, size={size_bytes / 1e6:.3f} MB")
-    return size_bytes
-
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+sock.settimeout(30)
+logger.info(f"Connecting to Node2 at {node2_host}:{node2_port}...")
 sock.connect((node2_host, node2_port))
 logger.info(f"Connected to Node2 at {node2_host}:{node2_port}")
 
@@ -109,21 +99,26 @@ for epoch in range(20):
         with torch.no_grad():
             a_t = node1(input_ids, attention_mask)
 
-        comm_cost_bytes += log_send("a_t", a_t)
+        comm_cost_bytes += tensor_bytes(a_t)
+        logger.info(f"Sending a_t tensor batch {t+1}")
         send_tensor(sock, a_t)
 
-        comm_cost_bytes += log_send("attention_mask", attention_mask)
+        comm_cost_bytes += tensor_bytes(attention_mask)
+        logger.info(f"Sending attention_mask tensor batch {t+1}")
         send_tensor(sock, attention_mask)
 
-        comm_cost_bytes += log_send("labels", labels.float())
+        comm_cost_bytes += tensor_bytes(labels.float())
+        logger.info(f"Sending labels tensor batch {t+1}")
         send_tensor(sock, labels.float())
 
+        logger.info(f"Receiving loss tensor batch {t+1}")
         loss_tensor = recv_tensor(sock, device)
-        comm_cost_bytes += log_recv("loss_tensor", loss_tensor)
+        comm_cost_bytes += tensor_bytes(loss_tensor)
         baseline_loss = loss_tensor.item()
 
+        logger.info(f"Receiving probs tensor batch {t+1}")
         probs = recv_tensor(sock, device)
-        comm_cost_bytes += log_recv("probs", probs)
+        comm_cost_bytes += tensor_bytes(probs)
         preds = torch.argmax(probs, dim=-1)
         correct = (preds == labels).sum().item()
         total_correct += correct
@@ -139,21 +134,26 @@ for epoch in range(20):
             with torch.no_grad():
                 a_t_plus = node1(input_ids, attention_mask)
 
-            comm_cost_bytes += log_send("a_t_plus", a_t_plus)
+            comm_cost_bytes += tensor_bytes(a_t_plus)
+            logger.info(f"Sending a_t_plus tensor batch {t+1} perturbation {p_idx+1}")
             send_tensor(sock, a_t_plus)
 
-            comm_cost_bytes += log_send("attention_mask", attention_mask)
+            comm_cost_bytes += tensor_bytes(attention_mask)
+            logger.info(f"Sending attention_mask tensor batch {t+1} perturbation {p_idx+1}")
             send_tensor(sock, attention_mask)
 
-            comm_cost_bytes += log_send("labels", labels.float())
+            comm_cost_bytes += tensor_bytes(labels.float())
+            logger.info(f"Sending labels tensor batch {t+1} perturbation {p_idx+1}")
             send_tensor(sock, labels.float())
 
+            logger.info(f"Receiving loss_plus tensor batch {t+1} perturbation {p_idx+1}")
             loss_plus_tensor = recv_tensor(sock, device)
-            comm_cost_bytes += log_recv("loss_plus_tensor", loss_plus_tensor)
+            comm_cost_bytes += tensor_bytes(loss_plus_tensor)
             loss_plus = loss_plus_tensor.item()
 
+            logger.info(f"Receiving probs_plus tensor batch {t+1} perturbation {p_idx+1}")
             probs_plus = recv_tensor(sock, device)
-            comm_cost_bytes += log_recv("probs_plus", probs_plus)
+            comm_cost_bytes += tensor_bytes(probs_plus)
 
             g_hat = (loss_plus - baseline_loss) / mu
             g_hat_total += g_hat * noise
@@ -194,7 +194,7 @@ for epoch in range(20):
             "Grad_scalar": epoch_grad_scalar,
             "Time_sec": epoch_end - epoch_start,
             "CommCost_MB": epoch_comm_mb,
-            "Algorithm": "ZO-SGD TCP",
+            "Algorithm": "ZO-SGD TCP (No Backprop)",
         }
     )
 
@@ -203,3 +203,4 @@ for epoch in range(20):
     logger.info("Saved train_log_summary.csv")
 
 sock.close()
+logger.info("Connection closed")
